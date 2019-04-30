@@ -9,7 +9,7 @@ use std::result;
 
 use crate::chunk;
 use crate::crc::Crc32;
-use crate::common::{Info, ColorType, BitDepth, Compression};
+use crate::common::{Info, ColorType, BitDepth, Compression, PixelDimensions, Unit};
 use crate::filter::{FilterType, filter};
 use crate::traits::{WriteBytesExt, HasParameters, Parameter};
 
@@ -60,6 +60,24 @@ impl<W: Write> Encoder<W> {
         info.width = width;
         info.height = height;
         Encoder { w: w, info: info }
+    }
+
+    /// Indicate the pixel dimensions in the header.
+    ///
+    /// Inserts a chunk with pixel information before the image data. Otherwise, the resulting
+    /// image will contain no chunk indicating the intended physical pixel dimensions.
+    pub fn set_pixel_dimensions(&mut self, pixel_dims: PixelDimensions) {
+        self.info.pixel_dims = Some(pixel_dims);
+    }
+
+    /// Indicate pixel dimensions via dpi.
+    ///
+    /// Like `set_pixel_dimensions` but assumes square pixels with known dpi.
+    pub fn set_dpi(&mut self, dpi: u32) {
+        // One inch is *defined* as 25.4mm.
+        const INCH_PER_METER: f64 = 1000./25.4;
+        let ppu = (dpi as f64 * INCH_PER_METER) as u32;
+        self.set_pixel_dimensions(PixelDimensions{xppu: ppu, yppu: ppu, unit: Unit::Meter})
     }
 
     pub fn write_header(self) -> Result<Writer<W>> {
@@ -117,6 +135,13 @@ impl<W: Write> Writer<W> {
         data[9] = self.info.color_type as u8;
         data[12] = if self.info.interlaced { 1 } else { 0 };
         self.write_chunk(chunk::IHDR, &data)?;
+        if let Some(pixel_dims) = self.info.pixel_dims {
+            let mut phys = [0; 9];
+            phys[0..4].copy_from_slice(&pixel_dims.xppu.to_be_bytes());
+            phys[4..8].copy_from_slice(&pixel_dims.yppu.to_be_bytes());
+            phys[8] = pixel_dims.unit as u8;
+            self.write_chunk(chunk::pHYs, &phys)?;
+        }
         Ok(self)
     }
 
