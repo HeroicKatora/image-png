@@ -33,6 +33,20 @@ pub struct OutputInfo {
     pub line_size: usize,
 }
 
+pub struct InterlacedRow<'row> {
+    /// The interlaced but unfiltered next row pass.
+    pub bytes: &'row [u8],
+    /// Information on the Adam7 pass that applies to this row.
+    pub adam7: Option<Adam7>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct Adam7 {
+    pub pass: u8,
+    pub line: u32,
+    pub width: u32,
+}
+
 impl OutputInfo {
     /// Returns the size needed to hold a decoded frame
     pub fn buffer_size(&self) -> usize {
@@ -254,10 +268,10 @@ impl<R: Read> Reader<R> {
             ))
         }
         if get_info!(self).interlaced {
-             while let Some((row, adam7)) = self.next_interlaced_row()? {
-                 let (pass, line, _) = adam7.unwrap();
+             while let Some(row) = self.next_interlaced_row()? {
+                 let Adam7 { pass, line, width: _ } = row.adam7.unwrap();
                  let samples = color_type.samples() as u8;
-                 utils::expand_pass(buf, width, row, pass, line, samples * (bit_depth as u8));
+                 utils::expand_pass(buf, width, row.bytes, pass, line, samples * (bit_depth as u8));
              }
         } else {
             let mut len = 0;
@@ -270,11 +284,11 @@ impl<R: Read> Reader<R> {
 
     /// Returns the next processed row of the image
     pub fn next_row(&mut self) -> Result<Option<&[u8]>, DecodingError> {
-        self.next_interlaced_row().map(|v| v.map(|v| v.0))
+        self.next_interlaced_row().map(|v| v.map(|v| v.bytes))
     }
 
     /// Returns the next processed row of the image
-    pub fn next_interlaced_row(&mut self) -> Result<Option<(&[u8], Option<(u8, u32, u32)>)>, DecodingError> {
+    pub fn next_interlaced_row(&mut self) -> Result<Option<InterlacedRow>, DecodingError> {
         use crate::common::ColorType::*;
         let transform = self.transform;
         if transform == crate::Transformations::IDENTITY {
@@ -282,9 +296,9 @@ impl<R: Read> Reader<R> {
         } else {
             // swap buffer to circumvent borrow issues
             let mut buffer = mem::replace(&mut self.processed, Vec::new());
-            let (got_next, adam7) = if let Some((row, adam7)) = self.next_raw_interlaced_row()? {
-                (&mut buffer[..]).write_all(row)?;
-                (true, adam7)
+            let (got_next, adam7) = if let Some(row) = self.next_raw_interlaced_row()? {
+                (&mut buffer[..]).write_all(row.bytes)?;
+                (true, row.adam7)
             } else {
                 (false, None)
             };
@@ -295,7 +309,7 @@ impl<R: Read> Reader<R> {
                     let info = get_info!(self);
                     (info.color_type, info.bit_depth as u8, info.trns.is_some())
                 };
-                let output_buffer = if let Some((_, _, width)) = adam7 {
+                let output_buffer = if let Some(Adam7 { width, .. }) = adam7 {
                     let width = self.line_size(width);
                     &mut self.processed[..width]
                 } else {
@@ -328,10 +342,10 @@ impl<R: Read> Reader<R> {
                         output_buffer[i] = output_buffer[2 * i];
                     }
                 }
-                Ok(Some((
-                    &output_buffer[..len],
-                    adam7
-                )))
+                Ok(Some(InterlacedRow {
+                    bytes: &output_buffer[..len],
+                    adam7,
+                }))
             } else {
                 Ok(None)
             }
@@ -426,20 +440,24 @@ impl<R: Read> Reader<R> {
     }
 
     /// Returns the next raw row of the image
-    fn next_raw_interlaced_row(&mut self) -> Result<Option<(&[u8], Option<(u8, u32, u32)>)>, DecodingError> {
+    fn next_raw_interlaced_row(&mut self) -> Result<Option<InterlacedRow>, DecodingError> {
         let _ = get_info!(self);
         let bpp = self.bpp;
         let (rowlen, passdata) = if let Some(ref mut adam7) = self.adam7 {
             let last_pass = adam7.current_pass();
-            if let Some((pass, line, len)) = adam7.next() {
-                let rowlen = get_info!(self).raw_row_length_from_width(len);
+            if let Some((pass, line, width)) = adam7.next() {
+                let rowlen = get_info!(self).raw_row_length_from_width(width);
                 if last_pass != pass {
                     self.prev.clear();
                     for _ in 0..rowlen {
                         self.prev.push(0);
                     }
                 }
-                (rowlen, Some((pass, line, len)))
+                (rowlen, Some(Adam7 {
+                    pass,
+                    line,
+                    width,
+                 }))
             } else {
                 return Ok(None)
             }
@@ -457,10 +475,10 @@ impl<R: Read> Reader<R> {
                     self.prev[..rowlen].copy_from_slice(&self.current[..rowlen]);
                     self.current.drain(0..rowlen);
                     return Ok(
-                        Some((
-                            &self.prev[1..rowlen],
-                            passdata
-                        ))
+                        Some(InterlacedRow {
+                            bytes: &self.prev[1..rowlen],
+                            adam7: passdata,
+                        })
                     )
                 } else {
                     return Err(DecodingError::Format(
