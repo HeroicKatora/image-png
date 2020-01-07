@@ -42,15 +42,40 @@ pub struct InterlacedRow<'row> {
 
 #[derive(Clone, Copy, Debug)]
 pub struct Adam7 {
-    pub pass: u8,
+    pub pass: Adam7Pass,
     pub line: u32,
     pub width: u32,
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Adam7Pass(u8);
 
 impl OutputInfo {
     /// Returns the size needed to hold a decoded frame
     pub fn buffer_size(&self) -> usize {
         self.line_size * self.height as usize
+    }
+}
+
+#[allow(non_upper_case_globals)] // Enumalating an enum.
+impl Adam7Pass {
+    pub const First: Adam7Pass = Adam7Pass(1);
+    pub const Second: Adam7Pass = Adam7Pass(2);
+    pub const Third: Adam7Pass = Adam7Pass(3);
+    pub const Fourth: Adam7Pass = Adam7Pass(4);
+    pub const Fifth: Adam7Pass = Adam7Pass(5);
+    pub const Sixth: Adam7Pass = Adam7Pass(6);
+    pub const Seventh: Adam7Pass = Adam7Pass(7);
+
+    pub fn next(self) -> Option<Self> {
+        match self.0 {
+            1|2|3|4|5|6 => Some(Adam7Pass(self.0 + 1)),
+            _ => None,
+        }
+    }
+
+    pub fn as_u8(self) -> u8 {
+        self.0
     }
 }
 

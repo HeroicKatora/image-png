@@ -2,6 +2,8 @@
 use std::iter::{repeat, StepBy};
 use std::ops::Range;
 
+use crate::decoder::Adam7Pass;
+
 #[inline(always)]
 pub fn unpack_bits<F>(buf: &mut [u8], channels: usize, bit_depth: u8, func: F)
 where F: Fn(u8, &mut[u8]) {
@@ -102,7 +104,7 @@ pub struct Adam7Iterator {
     line: u32,
     lines: u32,
     line_width: u32,
-    current_pass: u8,
+    current_pass: Adam7Pass,
     width: u32,
     height: u32,
 }
@@ -113,7 +115,7 @@ impl Adam7Iterator {
             line: 0,
             lines: 0,
             line_width: 0,
-            current_pass: 1,
+            current_pass: Adam7Pass::First,
             width,
             height,
         };
@@ -125,7 +127,7 @@ impl Adam7Iterator {
     fn init_pass(&mut self) {
         let w = f64::from(self.width);
         let h = f64::from(self.height);
-        let (line_width, lines) = match self.current_pass {
+        let (line_width, lines) = match self.current_pass.as_u8() {
             1 => (w/8.0, h/8.0),
             2 => ((w-4.0)/8.0, h/8.0),
             3 => (w/4.0, (h-4.0)/8.0),
@@ -141,21 +143,21 @@ impl Adam7Iterator {
     }
     
     /// The current pass#.
-    pub fn current_pass(&self) -> u8 {
+    pub fn current_pass(&self) -> Adam7Pass {
         self.current_pass
     }
 }
 
 /// Iterates over the (passes, lines, widths)
 impl Iterator for Adam7Iterator {
-    type Item = (u8, u32, u32);
-    fn next(&mut self) -> Option<(u8, u32, u32)> {
+    type Item = (Adam7Pass, u32, u32);
+    fn next(&mut self) -> Option<(Adam7Pass, u32, u32)> {
         if self.line < self.lines && self.line_width > 0 {
             let this_line = self.line;
             self.line += 1;
             Some((self.current_pass, this_line, self.line_width))
-        } else if self.current_pass < 7 {
-            self.current_pass += 1;
+        } else if let Some(next) = self.current_pass.next() {
+            self.current_pass = next;
             self.init_pass();
             self.next()
         } else {
@@ -183,8 +185,8 @@ fn subbyte_pixels<'a>(scanline: &'a [u8], bits_pp: usize) -> impl Iterator<Item=
 
 /// Given pass, image width, and line number, produce an iterator of bit positions of pixels to copy
 /// from the input scanline to the image buffer.
-fn expand_adam7_bits(pass: u8, width: usize, line_no: usize, bits_pp: usize) -> StepBy<Range<usize>> {
-    let (line_mul, line_off, samp_mul, samp_off) = match pass {
+fn expand_adam7_bits(pass: Adam7Pass, width: usize, line_no: usize, bits_pp: usize) -> StepBy<Range<usize>> {
+    let (line_mul, line_off, samp_mul, samp_off) = match pass.as_u8() {
         1 => (8, 0, 8, 0),
         2 => (8, 0, 8, 4),
         3 => (8, 4, 4, 0),
@@ -192,7 +194,7 @@ fn expand_adam7_bits(pass: u8, width: usize, line_no: usize, bits_pp: usize) -> 
         5 => (4, 2, 2, 0),
         6 => (2, 0, 2, 1),
         7 => (2, 1, 1, 0),
-        _ => panic!("Adam7 pass out of range: {}", pass)
+        _ => panic!("Adam7 pass out of range: {:?}", pass)
     };
 
     // the equivalent line number in progressive scan
@@ -209,14 +211,11 @@ fn expand_adam7_bits(pass: u8, width: usize, line_no: usize, bits_pp: usize) -> 
 /// Expands an Adam 7 pass
 pub fn expand_pass(
     img: &mut [u8], width: u32, scanline: &[u8],
-    pass: u8, line_no: u32, bits_pp: u8) {
+    pass: Adam7Pass, line_no: u32, bits_pp: u8) {
 
     let width = width as usize;
     let line_no = line_no as usize;
     let bits_pp = bits_pp as usize;
-
-	// pass is out of range but don't blow up
-    if pass == 0 || pass > 7 { return; }
 
     let bit_indices = expand_adam7_bits(pass, width, line_no, bits_pp);
 
@@ -246,7 +245,15 @@ fn test_adam7() {
     */
     let it = Adam7Iterator::new(4, 4);
     let passes: Vec<_> = it.collect();
-    assert_eq!(&*passes, &[(1, 0, 1), (4, 0, 1), (5, 0, 2), (6, 0, 2), (6, 1, 2), (7, 0, 4), (7, 1, 4)]);
+    assert_eq!(&*passes, &[
+        (Adam7Pass::First, 0, 1),
+        (Adam7Pass::Fourth, 0, 1),
+        (Adam7Pass::Fifth, 0, 2),
+        (Adam7Pass::Sixth, 0, 2),
+        (Adam7Pass::Sixth, 1, 2),
+        (Adam7Pass::Seventh, 0, 4),
+        (Adam7Pass::Seventh, 1, 4)
+    ]);
 }
 
 #[test]
@@ -270,21 +277,21 @@ fn test_expand_adam7_bits() {
         let start = 8 * line_no * width;
 
         assert_eq!(
-            expand_adam7_bits(1, width, line_no, bits_pp).collect::<Vec<_>>(),
+            expand_adam7_bits(Adam7Pass::First, width, line_no, bits_pp).collect::<Vec<_>>(),
             expected(start, 8, 4)
         );
 
         let start = start + 4;
 
         assert_eq!(
-            expand_adam7_bits(2, width, line_no, bits_pp).collect::<Vec<_>>(),
+            expand_adam7_bits(Adam7Pass::Second, width, line_no, bits_pp).collect::<Vec<_>>(),
             expected(start, 8, 4)
         );
 
         let start = (8 * line_no + 4) as usize * width as usize;
 
         assert_eq!(
-            expand_adam7_bits(3, width, line_no, bits_pp).collect::<Vec<_>>(),
+            expand_adam7_bits(Adam7Pass::Third, width, line_no, bits_pp).collect::<Vec<_>>(),
             expected(start, 4, 8)
         );
     }
@@ -293,14 +300,14 @@ fn test_expand_adam7_bits() {
         let start = 4 * line_no * width + 2;
 
         assert_eq!(
-            expand_adam7_bits(4, width, line_no, bits_pp).collect::<Vec<_>>(),
+            expand_adam7_bits(Adam7Pass::Fourth, width, line_no, bits_pp).collect::<Vec<_>>(),
             expected(start, 4, 8)
         );
 
         let start = (4 * line_no + 2) * width;
 
         assert_eq!(
-            expand_adam7_bits(5, width, line_no, bits_pp).collect::<Vec<_>>(),
+            expand_adam7_bits(Adam7Pass::Fifth, width, line_no, bits_pp).collect::<Vec<_>>(),
             expected(start, 2, 16)
         )
     }
@@ -309,7 +316,7 @@ fn test_expand_adam7_bits() {
         let start = 2 * line_no * width + 1;
 
         assert_eq!(
-            expand_adam7_bits(6, width, line_no, bits_pp).collect::<Vec<_>>(),
+            expand_adam7_bits(Adam7Pass::Sixth, width, line_no, bits_pp).collect::<Vec<_>>(),
             expected(start, 2, 16),
             "line_no: {}", line_no
         );
@@ -317,7 +324,7 @@ fn test_expand_adam7_bits() {
         let start = (2 * line_no + 1) * width;
 
         assert_eq!(
-            expand_adam7_bits(7, width, line_no, bits_pp).collect::<Vec<_>>(),
+            expand_adam7_bits(Adam7Pass::Seventh, width, line_no, bits_pp).collect::<Vec<_>>(),
             expected(start, 1, 32)
         );
     }
@@ -329,48 +336,48 @@ fn test_expand_pass_subbyte() {
     let width = 8;
     let bits_pp = 1;
 
-    expand_pass(&mut img, width, &[0b10000000], 1, 0, bits_pp);
+    expand_pass(&mut img, width, &[0b10000000], Adam7Pass::First, 0, bits_pp);
     assert_eq!(img, [0b10000000u8, 0, 0, 0, 0, 0, 0, 0]);
 
-    expand_pass(&mut img, width, &[0b10000000], 2, 0, bits_pp);
+    expand_pass(&mut img, width, &[0b10000000], Adam7Pass::Second, 0, bits_pp);
     assert_eq!(img, [0b10001000u8, 0, 0, 0, 0, 0, 0, 0]);
 
-    expand_pass(&mut img, width, &[0b11000000], 3, 0, bits_pp);
+    expand_pass(&mut img, width, &[0b11000000], Adam7Pass::Third, 0, bits_pp);
     assert_eq!(img, [0b10001000u8, 0, 0, 0, 0b10001000, 0, 0, 0]);
 
-    expand_pass(&mut img, width, &[0b11000000], 4, 0, bits_pp);
+    expand_pass(&mut img, width, &[0b11000000], Adam7Pass::Fourth, 0, bits_pp);
     assert_eq!(img, [0b10101010u8, 0, 0, 0, 0b10001000, 0, 0, 0]);
 
-    expand_pass(&mut img, width, &[0b11000000], 4, 1, bits_pp);
+    expand_pass(&mut img, width, &[0b11000000], Adam7Pass::Fourth, 1, bits_pp);
     assert_eq!(img, [0b10101010u8, 0, 0, 0, 0b10101010, 0, 0, 0]);
 
-    expand_pass(&mut img, width, &[0b11110000], 5, 0, bits_pp);
+    expand_pass(&mut img, width, &[0b11110000], Adam7Pass::Fifth, 0, bits_pp);
     assert_eq!(img, [0b10101010u8, 0, 0b10101010, 0, 0b10101010, 0, 0, 0]);
 
-    expand_pass(&mut img, width, &[0b11110000], 5, 1, bits_pp);
+    expand_pass(&mut img, width, &[0b11110000], Adam7Pass::Fifth, 1, bits_pp);
     assert_eq!(img, [0b10101010u8, 0, 0b10101010, 0, 0b10101010, 0, 0b10101010, 0]);
 
-    expand_pass(&mut img, width, &[0b11110000], 6, 0, bits_pp);
+    expand_pass(&mut img, width, &[0b11110000], Adam7Pass::Sixth, 0, bits_pp);
     assert_eq!(img, [0b11111111u8, 0, 0b10101010, 0, 0b10101010, 0, 0b10101010, 0]);
 
-    expand_pass(&mut img, width, &[0b11110000], 6, 1, bits_pp);
+    expand_pass(&mut img, width, &[0b11110000], Adam7Pass::Sixth, 1, bits_pp);
     assert_eq!(img, [0b11111111u8, 0, 0b11111111, 0, 0b10101010, 0, 0b10101010, 0]);
 
-    expand_pass(&mut img, width, &[0b11110000], 6, 2, bits_pp);
+    expand_pass(&mut img, width, &[0b11110000], Adam7Pass::Sixth, 2, bits_pp);
     assert_eq!(img, [0b11111111u8, 0, 0b11111111, 0, 0b11111111, 0, 0b10101010, 0]);
 
-    expand_pass(&mut img, width, &[0b11110000], 6, 3, bits_pp);
+    expand_pass(&mut img, width, &[0b11110000], Adam7Pass::Sixth, 3, bits_pp);
     assert_eq!([0b11111111u8, 0, 0b11111111, 0, 0b11111111, 0, 0b11111111, 0], img);
 
-    expand_pass(&mut img, width, &[0b11111111], 7, 0, bits_pp);
+    expand_pass(&mut img, width, &[0b11111111], Adam7Pass::Seventh, 0, bits_pp);
     assert_eq!([0b11111111u8, 0b11111111, 0b11111111, 0, 0b11111111, 0, 0b11111111, 0], img);
 
-    expand_pass(&mut img, width, &[0b11111111], 7, 1, bits_pp);
+    expand_pass(&mut img, width, &[0b11111111], Adam7Pass::Seventh, 1, bits_pp);
     assert_eq!([0b11111111u8, 0b11111111, 0b11111111, 0b11111111, 0b11111111, 0, 0b11111111, 0], img);
 
-    expand_pass(&mut img, width, &[0b11111111], 7, 2, bits_pp);
+    expand_pass(&mut img, width, &[0b11111111], Adam7Pass::Seventh, 2, bits_pp);
     assert_eq!([0b11111111u8, 0b11111111, 0b11111111, 0b11111111, 0b11111111, 0b11111111, 0b11111111, 0], img);
 
-    expand_pass(&mut img, width, &[0b11111111], 7, 3, bits_pp);
+    expand_pass(&mut img, width, &[0b11111111], Adam7Pass::Seventh, 3, bits_pp);
     assert_eq!([0b11111111u8, 0b11111111, 0b11111111, 0b11111111, 0b11111111, 0b11111111, 0b11111111, 0b11111111], img);
 }
