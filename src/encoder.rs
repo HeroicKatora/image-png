@@ -75,7 +75,7 @@ impl<W: Write> Encoder<W> {
     /// Sets the default frame rate of the animation
     ///
     /// It will fail if `set_animation_info` isn't called before
-    pub fn set_frame_rate(&mut self, delay_num: u16, delay_den: u16) -> Result<()> {
+    pub fn set_frame_delay(&mut self, delay_num: u16, delay_den: u16) -> Result<()> {
         if let Some(ref mut frame_ctl) = self.info.frame_control {
             frame_ctl.delay_num = delay_num;
             frame_ctl.delay_den = delay_den;
@@ -281,6 +281,19 @@ impl<W: Write> Writer<W> {
         }
 
         Ok(self)
+    }
+
+    /// Sets the default frame rate of the animation
+    ///
+    /// It will fail if `set_animation_info` isn't called before
+    pub fn set_frame_delay(&mut self, delay_num: u16, delay_den: u16) -> Result<()> {
+        if let Some(ref mut frame_ctl) = self.info.frame_control {
+            frame_ctl.delay_num = delay_num;
+            frame_ctl.delay_den = delay_den;
+            Ok(())
+        } else {
+            Err(EncodingError::Format("It's not an animation".into()))
+        }
     }
 
     pub fn write_chunk(&mut self, name: ChunkType, data: &[u8]) -> Result<()> {
