@@ -159,7 +159,7 @@ impl<R: Read> Decoder<R> {
     }
 
     /// Reads all meta data until the first IDAT chunk
-    pub fn read_info(self) -> Result<(OutputInfo, Reader<R>), DecodingError> {
+    pub fn read_info(self) -> Result<Reader<R>, DecodingError> {
         let mut r = Reader::new(self.r, StreamingDecoder::new(), self.transform, self.limits);
         r.init()?;
 
@@ -180,18 +180,7 @@ impl<R: Read> Decoder<R> {
             return Err(DecodingError::LimitsExceeded);
         }
 
-        let (ct, bits) = r.output_color_type();
-        let info = {
-            let info = r.info();
-            OutputInfo {
-                width: info.width,
-                height: info.height,
-                color_type: ct,
-                bit_depth: bits,
-                line_size: r.output_line_size(info.width),
-            }
-        };
-        Ok((info, r))
+        Ok(r)
     }
 
     /// Set the allowed and performed transformations.
@@ -416,6 +405,26 @@ impl<R: Read> Reader<R> {
         self.decoder.info().unwrap()
     }
 
+    /// Get information on the required output buffer.
+    pub fn output_info(&self) -> OutputInfo {
+        let info = self.info();
+        let (ct, bits) = self.output_color_type();
+
+        let (width, height) = if let Some(fc) = info.frame_control {
+            (fc.width, fc.height)
+        } else {
+            (info.width, info.height)
+        };
+
+        OutputInfo {
+            width: width,
+            height: height,
+            color_type: ct,
+            bit_depth: bits,
+            line_size: self.output_line_size(info.width),
+        }
+    }
+
     /// Get the subframe index of the current info.
     fn subframe_idx(&self) -> SubframeIdx {
         let info = match self.decoder.info() {
@@ -601,7 +610,7 @@ impl<R: Read> Reader<R> {
 
     /// Returns the color type and the number of bits per sample
     /// of the data returned by `Reader::next_row` and Reader::frames`.
-    pub fn output_color_type(&mut self) -> (ColorType, BitDepth) {
+    pub fn output_color_type(&self) -> (ColorType, BitDepth) {
         self.imm_output_color_type()
     }
 
@@ -946,15 +955,13 @@ mod tests {
             "/tests/bugfixes/x_issue#214.png"
         ));
 
-        let (info, mut normal) = Decoder::new(IMG).read_info().unwrap();
-
-        let mut buffer = vec![0; info.buffer_size()];
+        let mut normal = Decoder::new(IMG).read_info().unwrap();
+        let mut buffer = vec![0; normal.output_buffer_size()];
         let normal = normal.next_frame(&mut buffer).unwrap_err();
 
         let smal = Decoder::new(SmalBuf::new(IMG, 1))
             .read_info()
             .unwrap()
-            .1
             .next_frame(&mut buffer)
             .unwrap_err();
 

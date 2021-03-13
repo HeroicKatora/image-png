@@ -17,8 +17,9 @@ use glium::{BlitTarget, Rect, Surface};
 fn load_image(path: &path::PathBuf) -> io::Result<RawImage2d<'static, u8>> {
     use png::ColorType::*;
     let decoder = png::Decoder::new(File::open(path)?);
-    let (info, mut reader) = decoder.read_info()?;
-    let mut img_data = vec![0; info.buffer_size()];
+    let mut reader = decoder.read_info()?;
+    let info = reader.output_info();
+    let mut img_data = vec![0; reader.output_buffer_size()];
     reader.next_frame(&mut img_data)?;
 
     let (data, format) = match info.color_type {

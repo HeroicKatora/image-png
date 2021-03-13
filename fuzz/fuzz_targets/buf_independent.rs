@@ -53,19 +53,21 @@ fn png_compare<R: BufRead, S: BufRead>(reference: png::Decoder<R>, smal: png::De
     -> std::result::Result<png::OutputInfo, ()> 
 {
     let mut smal = Some(smal);
-    let (info, mut reference) = reference.read_info().map_err(|_| {
+    let mut reference = reference.read_info().map_err(|_| {
         assert!(smal.take().unwrap().read_info().is_err());
     })?;
+    let info = reference.output_info();
 
-    let (sinfo, mut smal) = smal.take().unwrap().read_info().expect("Deviation");
+    let mut smal = smal.take().unwrap().read_info().expect("Deviation");
+    let sinfo = smal.output_info();
     assert_eq!(info, sinfo);
 
-    if info.buffer_size() > 5_000_000 {
+    if reference.output_buffer_size() > 5_000_000 {
         return Err(());
     }
 
-    let mut ref_data = vec![0; info.buffer_size()];
-    let mut smal_data = vec![0; info.buffer_size()];
+    let mut ref_data = vec![0; reference.output_buffer_size()];
+    let mut smal_data = vec![0; reference.output_buffer_size()];
 
     use png::DecodingError::*;
 
@@ -75,7 +77,9 @@ fn png_compare<R: BufRead, S: BufRead>(reference: png::Decoder<R>, smal: png::De
         match (rref, rsmal) {
             (Ok(()), Ok(())) if ref_data == smal_data => {},
             (Ok(()), Ok(())) => panic!("Deviating data decoded"),
-            (Err(Format(fr)), Err(Format(fs))) if fr != fs => panic!("Deviating format errors {} vs {}", fr, fs),
+            (Err(Format(fr)), Err(Format(fs)))
+                if format!("{:?}", fr) != format!("{:?}", fs)
+                => panic!("Deviating format errors {} vs {}", fr, fs),
             (Err(er), Err(es)) if discriminant(&er) == discriminant(&es) => break Ok(sinfo),
             (Err(ferr), Err(serr)) => panic!("Deviating errors {:?} vs {:?}", ferr, serr),
             (Ok(_), Err(err)) => panic!("Small buffer failed {:?}", err),

@@ -101,8 +101,9 @@ fn render_images() {
     process_images("results.txt", &TEST_SUITES, |path| {
         let mut decoder = png::Decoder::new(File::open(path)?);
         decoder.set_transformations(png::Transformations::normalize_to_color8());
-        let (info, mut reader) = decoder.read_info()?;
-        let mut img_data = vec![0; info.buffer_size()];
+        let mut reader = decoder.read_info()?;
+        let info = reader.output_info();
+        let mut img_data = vec![0; reader.output_buffer_size()];
         reader.next_frame(&mut img_data)?;
         // First sanity check:
         assert_eq!(
@@ -123,8 +124,9 @@ fn render_images() {
 fn render_images_identity() {
     process_images("results_identity.txt", &TEST_SUITES, |path| {
         let decoder = png::Decoder::new(File::open(&path)?);
-        let (info, mut reader) = decoder.read_info()?;
-        let mut img_data = vec![0; info.buffer_size()];
+        let mut reader = decoder.read_info()?;
+        let info = reader.output_info();
+        let mut img_data = vec![0; reader.output_buffer_size()];
         reader.next_frame(&mut img_data)?;
         let bits = (info.width as usize * info.color_type.samples() * info.bit_depth as usize + 7
             & !7)
@@ -164,8 +166,8 @@ fn apng_images() {
 
         let mut decoder = png::Decoder::new(File::open(&path)?);
         decoder.set_transformations(png::Transformations::normalize_to_color8());
-        let (info, mut reader) = decoder.read_info()?;
-        let mut img_data = vec![0; info.buffer_size()];
+        let mut reader = decoder.read_info()?;
+        let mut img_data = vec![0; reader.output_buffer_size()];
         let real_frames = reader.info().animation_control().unwrap().num_frames;
         // Print out frame info, helps with blessing the result file for new images.
         println!(

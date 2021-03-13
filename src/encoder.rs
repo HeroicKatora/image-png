@@ -971,12 +971,13 @@ mod tests {
                 eprintln!("{}", path.display());
                 // Decode image
                 let decoder = Decoder::new(File::open(path).unwrap());
-                let (info, mut reader) = decoder.read_info().unwrap();
+                let mut reader = decoder.read_info().unwrap();
+                let info = reader.output_info();
                 if info.line_size != 32 {
                     // TODO encoding only works with line size 32?
                     continue;
                 }
-                let mut buf = vec![0; info.buffer_size()];
+                let mut buf = vec![0; reader.output_buffer_size()];
                 eprintln!("{:?}", info);
                 reader.next_frame(&mut buf).unwrap();
                 // Encode decoded image
@@ -994,8 +995,8 @@ mod tests {
                 }
                 // Decode encoded decoded image
                 let decoder = Decoder::new(&*out);
-                let (info, mut reader) = decoder.read_info().unwrap();
-                let mut buf2 = vec![0; info.buffer_size()];
+                let mut reader = decoder.read_info().unwrap();
+                let mut buf2 = vec![0; reader.output_buffer_size()];
                 reader.next_frame(&mut buf2).unwrap();
                 // check if the encoded image is ok:
                 assert_eq!(buf, buf2);
@@ -1017,12 +1018,13 @@ mod tests {
                 }
                 // Decode image
                 let decoder = Decoder::new(File::open(path).unwrap());
-                let (info, mut reader) = decoder.read_info().unwrap();
+                let mut reader = decoder.read_info().unwrap();
+                let info = reader.output_info();
                 if info.line_size != 32 {
                     // TODO encoding only works with line size 32?
                     continue;
                 }
-                let mut buf = vec![0; info.buffer_size()];
+                let mut buf = vec![0; reader.output_buffer_size()];
                 reader.next_frame(&mut buf).unwrap();
                 // Encode decoded image
                 let mut out = Vec::new();
@@ -1046,8 +1048,8 @@ mod tests {
                 }
                 // Decode encoded decoded image
                 let decoder = Decoder::new(&*out);
-                let (info, mut reader) = decoder.read_info().unwrap();
-                let mut buf2 = vec![0; info.buffer_size()];
+                let mut reader = decoder.read_info().unwrap();
+                let mut buf2 = vec![0; reader.output_buffer_size()];
                 reader.next_frame(&mut buf2).unwrap();
                 // check if the encoded image is ok:
                 assert_eq!(buf, buf2);
@@ -1061,9 +1063,10 @@ mod tests {
             // Do a reference decoding, choose a fitting palette image from pngsuite
             let path = format!("tests/pngsuite/basn3p0{}.png", bit_depth);
             let decoder = Decoder::new(File::open(&path).unwrap());
-            let (info, mut reader) = decoder.read_info().unwrap();
+            let mut reader = decoder.read_info().unwrap();
+            let info = reader.output_info();
 
-            let mut decoded_pixels = vec![0; info.buffer_size()];
+            let mut decoded_pixels = vec![0; reader.output_buffer_size()];
             assert_eq!(
                 info.width as usize * info.height as usize * usize::from(bit_depth),
                 decoded_pixels.len() * 8
@@ -1085,8 +1088,8 @@ mod tests {
 
             // Decode re-encoded image
             let decoder = Decoder::new(&*out);
-            let (info, mut reader) = decoder.read_info().unwrap();
-            let mut redecoded = vec![0; info.buffer_size()];
+            let mut reader = decoder.read_info().unwrap();
+            let mut redecoded = vec![0; reader.output_buffer_size()];
             reader.next_frame(&mut redecoded).unwrap();
             // check if the encoded image is ok:
             assert_eq!(indexed_data, redecoded);
@@ -1293,7 +1296,8 @@ mod tests {
             encoder.write_header()?.write_image_data(&pixel)?;
 
             let decoder = crate::Decoder::new(io::Cursor::new(buffer));
-            let (info, mut reader) = decoder.read_info()?;
+            let mut reader = decoder.read_info()?;
+            let info = reader.output_info();
             assert_eq!(info.width, 4);
             assert_eq!(info.height, 4);
             let mut dest = vec![0; pixel.len()];
@@ -1328,7 +1332,8 @@ mod tests {
             encoder.write_header()?.write_image_data(&pixel)?;
 
             let decoder = crate::Decoder::new(io::Cursor::new(buffer));
-            let (info, mut reader) = decoder.read_info()?;
+            let mut reader = decoder.read_info()?;
+            let info = reader.output_info();
             assert_eq!(
                 reader.info().source_gamma,
                 gamma,
